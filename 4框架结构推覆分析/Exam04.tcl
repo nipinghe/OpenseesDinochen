@@ -1,7 +1,16 @@
+# （1） 框架结构在 OPENSEES 中的建模方法 
+# （2） 基于楼板传荷的力学假定，将楼板的面荷载简化为梁的均布荷载； 
+# （3） OPENSEES 及 ETO 程序中柱纤维截面的定义； 
+# （4） 截面抗扭与抗剪弹性本构的计算
+# （5） OPENSEES 截面组装（Section Aggregator）命令流的介绍； 
+# （6） OPENSEES 中构件 P-Delta 的命令流介绍； 
+# （7） OPENSEES 中 Push-over 推覆分析的命令流设置； 
+# （8） 保持荷载稳定的 loadConst 命令流的介绍
+
 wipe
 puts "System"
 model basic -ndm 3 -ndf 6
-puts "restraint"
+puts "node"
 node 1 4.500E+003 5.000E+003 1.050E+004
 node 2 4.500E+003 5.000E+003 1.350E+004
 node 3 4.500E+003 0.000E+000 1.050E+004
@@ -30,8 +39,7 @@ node 25 0.000E+000 0.000E+000 0.000E+000
 node 26 0.000E+000 5.000E+003 0.000E+000
 node 27 9.000E+003 0.000E+000 0.000E+000
 node 28 9.000E+003 5.000E+003 0.000E+000
-puts "rigidDiaphragm"
-puts "node"
+puts "restraint"
 fix 23 1 1 1 1 1 1;
 fix 24 1 1 1 1 1 1;
 fix 25 1 1 1 1 1 1;
@@ -42,6 +50,9 @@ puts "material"
 uniaxialMaterial Steel01 1 335 200000 0.00001 
 uniaxialMaterial Concrete01 2 -26.8 -0.002 -10 -0.0033
 uniaxialMaterial Elastic 3 1.999E+005
+# 上一个实例中，采用的纤维单元是没有指定抗剪与抗扭的刚度的，所以程序为了完成计算，给抗扭刚度置了大值
+# 以矩形混凝土截面的 Y 轴剪切本构为例，（柱截面 400x400）刚度 k 为 1.489E+009
+# 见PDF
 uniaxialMaterial Elastic 201 1.489E+009
 uniaxialMaterial Elastic 301 1.489E+009
 uniaxialMaterial Elastic 401 4.026E+013
@@ -248,11 +259,23 @@ fiber -1.150E+002 -2.150E+002 4.900E+002 1
 fiber 0.000E+000 -2.150E+002 4.900E+002 1
 fiber 1.150E+002 -2.150E+002 4.900E+002 1
 }
+# 本实例对纤维截面进行抗剪与抗扭的刚度进行补充定义，主要用到的是“截面组装” （Section Aggregator）， 参与组装的各分量是不相关的，即不互相影响
+# 采用了纤维单元，压弯已经是耦合的，但它们与双向剪切与扭转是不耦合的。 
+
+# 纤维截面的编号为 1（纤维截面算 1 个截面本构），对应该截面的抗剪与抗扭 本构编号分别为 201，301 及 401，
+# 通过截面组装的方式将这四个截面本构组装在一起，命令流如下： 
+# section Aggregator 1001 201 Vy 301 Vz 401 T -section 1 
+# 1001 为组装后的截面编号，
+# 201 Vy 代表 Vy（Y 方向抗剪）采用单轴本构 201 号；
+# 301 Vz 代表 Vz（Z 方向抗剪）采用单轴本构 301 号；
+# 401 T 代表 T（抗扭）采 用单轴本构 401 号；
+# -section 1 表示参与组装的纤维截面为 1 号截
 section Aggregator 1001 201 Vy 301 Vz 401 T -section 1
 section Aggregator 1002 202 Vy 302 Vz 402 T -section 2
 section Aggregator 1003 203 Vy 303 Vz 403 T -section 3
 section Aggregator 1004 204 Vy 304 Vz 404 T -section 4
 puts "transformation"
+# 通过该设置考虑柱子的 P-Delta 效应（具体效果在后述章节讨论）。相应的命令流只是将“Linear”改为“PDelta” 
 geomTransf PDelta 1 1.000 0.000 0.000 
 geomTransf PDelta 2 1.000 0.000 0.000 
 geomTransf PDelta 3 1.000 0.000 0.000 
@@ -351,14 +374,17 @@ element nonlinearBeamColumn 47 19 20 4 1003 47
 puts "recorder"
 recorder Element -file ele0.out -time -eleRange 1 47 localForce
 recorder Node -file node0.out -time -nodeRange 1 28 -dof 1 2 3 disp
+# 增加记录框架每个楼层的角点的位移，可以绘制推覆曲线与层间位移角。 记录 8、7、12、20 号结点的位移，保存于以下文件中
 recorder Node -file node8.out -time -node 8 -dof 1 2 3 disp
 recorder Node -file node7.out -time -node 7 -dof 1 2 3 disp
 recorder Node -file node12.out -time -node 12 -dof 1 2 3 disp
 recorder Node -file node20.out -time -node 20 -dof 1 2 3 disp
+
 recorder Element -file ele0_sec1d.out -time -eleRange 1 47 section 1 deformation
 recorder Element -file ele0_sec3d.out -time -eleRange 1 47 section 4 deformation
 puts "gravity"
 ## Load Case = DEAD
+# OPENSEES 只支持输入均布荷载，对于三角形荷载或梯形荷载可以通过等效合力（剪力）计算转化为均布荷载
 pattern Plain 1 Linear {
 eleLoad -ele 5 -type -beamUniform 0 -3.797E+000 0
 eleLoad -ele 5 -type -beamUniform 0 -1.688E+000 0
@@ -454,6 +480,9 @@ load 19 4.500E+003 0.000E+000 0.000E+000 0.000E+000 0.000E+000 0.000E+000
 load 20 4.500E+003 0.000E+000 0.000E+000 0.000E+000 0.000E+000 0.000E+000
 }
 puts "analysis"
+# 最重要的一个就是荷载恒定设置，为保证重力加载的荷载保持不变， 在这基础上施加位移控制，用到以下命令流： 
+# loadConst 0.0
+# 加了上述命令报错？？
 constraints Plain
 numberer Plain
 system BandGeneral
